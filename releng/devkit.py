@@ -2,6 +2,7 @@
 
 import argparse
 from collections import OrderedDict
+import frida_version
 from glob import glob
 from pathlib import Path
 import platform
@@ -30,6 +31,7 @@ def main():
     parser.add_argument("kit")
     parser.add_argument("host")
     parser.add_argument("outdir")
+    parser.add_argument("-p", "--package", help="generate a package", action="store_true")
     parser.add_argument("-t", "--thin", help="build without cross-arch support", action="store_true")
 
     arguments = parser.parse_args()
@@ -44,7 +46,44 @@ def main():
 
     outdir.mkdir(parents=True, exist_ok=True)
 
-    generate_devkit(kit, host, flavor, outdir)
+    if arguments.package:
+        generate_package(kit, host, flavor, outdir)
+    else:
+        generate_devkit(kit, host, flavor, outdir)
+
+
+def generate_package(kit, host, flavor, output_dir):
+    version = frida_version.detect()
+
+    with tempfile.TemporaryDirectory(prefix="frida-devkit") as temp_dir:
+        temp_dir = Path(temp_dir)
+        filenames = generate_devkit(kit, host, flavor, temp_dir)
+
+        stem = f"{kit}-devkit-{version.name}-{host}"
+
+        tar_archive = stem + ".tar"
+        tar_xz_archive = tar_archive + ".xz"
+        subprocess.run(["tar", "cf", tar_archive] + filenames,
+                       cwd=temp_dir,
+                       check=True)
+        if host.startswith("windows-"):
+            subprocess.run(["7z", "a", "-txz", tar_xz_archive, tar_archive],
+                           cwd=temp_dir,
+                           check=True)
+        else:
+            subprocess.run(["xz", tar_archive],
+                           cwd=temp_dir,
+                           check=True)
+        (output_dir / tar_xz_archive).unlink(missing_ok=True)
+        shutil.move(temp_dir / tar_xz_archive, output_dir)
+
+        if host.startswith("windows-"):
+            sfx_archive = stem + ".exe"
+            subprocess.run(["7z", "a", "-sfx7zCon.sfx", "-r", sfx_archive] + filenames,
+                           cwd=temp_dir,
+                           check=True)
+            (output_dir / sfx_archive).unlink(missing_ok=True)
+            shutil.move(temp_dir / sfx_archive, output_dir)
 
 
 def generate_devkit(kit, host, flavor, output_dir):
